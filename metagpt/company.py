@@ -46,7 +46,7 @@ class DomainClassifier:
         Idea: {idea}
 
         # Output format:
-        Yes, the domain of the idea is a software development project.
+        Yes, the domain of the idea {idea!r} is a software development project.
         """
         domain = await self.llm.aask(prompt)
         if domain.lower().strip().startswith("yes"):
@@ -92,8 +92,9 @@ class Company:
         You need to identify the applicable team members roles to work on the project.
 
         # Attention 1: Pick the suitable ones, no need to list all the roles.
-        # Attention 2: You can add more roles if you think they are necessary.
-
+        # Attention 2: Make sure to list roles on the basis of organization hierarchy.
+        # Attention 3: You can add more roles if you think they are necessary.
+        
         Idea: {idea}
 
         # Output format:

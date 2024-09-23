@@ -81,4 +81,4 @@ spark_ai_python~=0.3.30
 agentops
 transformers==4.44.2
 sentencepiece==0.2.0
-torch==2.4.1
+torch
