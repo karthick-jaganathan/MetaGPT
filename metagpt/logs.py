@@ -7,6 +7,7 @@
 """
 
 import sys
+import os
 from datetime import datetime
 
 from loguru import logger as _logger
@@ -31,7 +32,7 @@ def define_log_level(print_level="INFO", logfile_level="DEBUG", name: str = None
     return _logger
 
 
-logger = define_log_level()
+logger = define_log_level(os.environ.get("LOG_LEVEL", "INFO"))
 
 
 def log_llm_stream(msg):

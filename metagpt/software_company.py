@@ -26,18 +26,12 @@ def generate_repo(
     reqa_file="",
     max_auto_summarize_code=0,
     recover_path=None,
+    classifier=None,
 ) -> ProjectRepo:
     """Run the startup logic. Can be called from CLI or other Python scripts."""
     from metagpt.config2 import config
     from metagpt.context import Context
-    from metagpt.roles import (
-        Architect,
-        Engineer,
-        ProductManager,
-        ProjectManager,
-        QaEngineer,
-    )
-    from metagpt.team import Team
+    from metagpt.company import Company, DomainClassifier
 
     if config.agentops_api_key != "":
         agentops.init(config.agentops_api_key, tags=["software_company"])
@@ -45,36 +39,10 @@ def generate_repo(
     config.update_via_cli(project_path, project_name, inc, reqa_file, max_auto_summarize_code)
     ctx = Context(config=config)
 
-    if not recover_path:
-        company = Team(context=ctx)
-        company.hire(
-            [
-                ProductManager(),
-                Architect(),
-                ProjectManager(),
-            ]
-        )
-
-        if implement or code_review:
-            company.hire([Engineer(n_borg=5, use_code_review=code_review)])
-
-        if run_tests:
-            company.hire([QaEngineer()])
-    else:
-        stg_path = Path(recover_path)
-        if not stg_path.exists() or not str(stg_path).endswith("team"):
-            raise FileNotFoundError(f"{recover_path} not exists or not endswith `team`")
-
-        company = Team.deserialize(stg_path=stg_path, context=ctx)
-        idea = company.idea
-
-    company.invest(investment)
+    company = Company(context=ctx, domain_classifier=DomainClassifier(ctx, model=classifier))
+    company.invest = investment
     company.run_project(idea)
-    asyncio.run(company.run(n_round=n_round))
-
-    if config.agentops_api_key != "":
-        agentops.end_session("Success")
-
+    asyncio.run(company.run(n_round))
     return ctx.repo
 
 
@@ -102,6 +70,9 @@ def startup(
     ),
     recover_path: str = typer.Option(default=None, help="recover the project from existing serialized storage"),
     init_config: bool = typer.Option(default=False, help="Initialize the configuration file for MetaGPT."),
+    classifier: str = typer.Option(default="",
+                                   help="Use the given model to identify the domain of given idea. "
+                                        "For example, 'facebook/bart-large-mnli' or 'roberta-large-mnli'"),
 ):
     """Run a startup. Be a boss."""
     if init_config:
@@ -125,6 +96,7 @@ def startup(
         reqa_file,
         max_auto_summarize_code,
         recover_path,
+        classifier,
     )
 
 
