@@ -26,6 +26,7 @@ def generate_repo(
     reqa_file="",
     max_auto_summarize_code=0,
     recover_path=None,
+    collect_feedback=False,
 ) -> ProjectRepo:
     """Run the startup logic. Can be called from CLI or other Python scripts."""
     from metagpt.config2 import config
@@ -38,9 +39,13 @@ def generate_repo(
         QaEngineer,
     )
     from metagpt.team import Team
+    from metagpt.utils.feedback_collector import FEEDBACK_REGISTRY
 
     if config.agentops_api_key != "":
         agentops.init(config.agentops_api_key, tags=["software_company"])
+
+    if collect_feedback:
+        FEEDBACK_REGISTRY.collect_feedback = collect_feedback
 
     config.update_via_cli(project_path, project_name, inc, reqa_file, max_auto_summarize_code)
     ctx = Context(config=config)
@@ -102,6 +107,7 @@ def startup(
     ),
     recover_path: str = typer.Option(default=None, help="recover the project from existing serialized storage"),
     init_config: bool = typer.Option(default=False, help="Initialize the configuration file for MetaGPT."),
+    collect_feedback: bool = typer.Option(default=False, help="Collect user feedbacks to adjust prompts in real-time."),
 ):
     """Run a startup. Be a boss."""
     if init_config:
@@ -125,6 +131,7 @@ def startup(
         reqa_file,
         max_auto_summarize_code,
         recover_path,
+        collect_feedback,
     )
 
 

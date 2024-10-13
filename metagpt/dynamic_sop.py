@@ -13,6 +13,7 @@ from metagpt.context import Context
 from metagpt.provider.llm_provider_registry import create_llm_instance
 from metagpt.roles import Role
 from metagpt.logs import logger
+from metagpt.utils.feedback_collector import llm_feedback_loop, Prompt
 
 role_directory = '/Users/raj/Desktop/uoa/capstone/mgpt/MetaGPT/metagpt/roles'
 
@@ -90,20 +91,22 @@ class DynamicSOP:
         self.inspector = RoleInspector(role_directory)
         self.agents = self.inspector.get_all_role_summary()
 
-    async def classify_idea(self, idea: str) -> str:
-        prompt = f"""
-        You are given a task description and a list of supported domains: {self.SUPPORTED_DOMAINS}.
-        Classify the task to one of the domains based on key features or keywords.
-        
-        Task: {idea}
+    async def classify_idea(self, idea: str | Prompt = None) -> str:
+        if not isinstance(idea, Prompt):
+            idea = Prompt(f"""
+            You are given a task description and a list of supported domains: {self.SUPPORTED_DOMAINS}.
+            Classify the task to one of the domains based on key features or keywords.
+            
+            Task: {idea}
 
-        Important:
-        - Only return the domain name do not include any additional text or explanations.
-
-        ### Output format:
-        <Domain name> (exact match to one of {self.SUPPORTED_DOMAINS} or 'None')
-        """
-        domain = await self.llm.aask(prompt)
+            ### Output format:
+            <Domain name> (exact match to one of {self.SUPPORTED_DOMAINS} or 'None')
+            """)
+        query = idea.adjusted_prompt if idea.adjusted_prompt else idea.prompt
+        domain = await self.llm.aask(query)
+        llm_feedback_loop(idea, domain)
+        if idea.adjusted_prompt:
+            domain = await self.classify_idea(idea)
         logger.info(f"Classified idea: {domain.strip()}")
         self.domain = domain.strip()
         return self.domain
@@ -303,7 +306,10 @@ class DynamicSOP:
         for idea in ideas:
             asyncio.run(self.run_project(idea))
 
+
 if __name__ == "__main__":
     # Assuming the MetaGPT context/config is provided
     company = DynamicSOP(Context(config=config))
+    from metagpt.utils.feedback_collector import FEEDBACK_REGISTRY
+    FEEDBACK_REGISTRY.collect_feedback = True
     company.run()
