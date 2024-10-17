@@ -208,6 +208,7 @@ class DynamicSOP:
         self.inspector = RoleInspector()
         self.agents = self.inspector.get_all_role_summary()
 
+    
     async def classify_idea(self, idea: str) -> str:
         if not isinstance(idea, Prompt):
             idea = Prompt(f"""
@@ -296,7 +297,7 @@ class DynamicSOP:
         Trigger: The action from the previous agent that triggers this agent.
 
         """
-        agents_response = await self.llm.aask(prompt, stream=False)
+        agents_response = await self.llm.aask(prompt, stream=True)
 
         return self.parse_assign_agents(agents_response)
 
@@ -323,6 +324,29 @@ class DynamicSOP:
             agent_steps.append(step_data)
         
         return agent_steps
+        
+
+    def parse_assign_agents_old(self, text):
+        # Pattern to match steps, roles, responsibilities, and tasks
+        pattern = r'(\d+)\.\s+Step:\s+([^\n]+)\n([A-Za-z]+):\s+([^:]+):\s+([^\n]+)'
+        
+        # Find all matches
+        matches = re.findall(pattern, text)
+
+        subtask_roles_and_responsibilities = []
+        
+        for match in matches:
+            subtask_data = {
+                'subtask_number': match[0].strip(),
+                'subtask_description': match[1].strip(),
+                'agent': match[2].strip(),
+                'skill': match[3].strip(),
+                'actions': match[4].strip().split(', '),
+                'watch': match[5].strip().split(', ')
+            }
+            subtask_roles_and_responsibilities.append(subtask_data)
+        
+        return subtask_roles_and_responsibilities
     
     def agg_agents(self, agents):
         final_agents = {}
@@ -373,8 +397,8 @@ class DynamicSOP:
             return None
 
     def run(self):
-        ideas = ['write a cli based snake game']  # Example project ideas, write a cli based snake game, write a design requirement and design document for an AI-powered tool 'create an AI-powered design tool', 'develop a mobile app'
-        asyncio.run(self.run_project(ideas[0]))
+        ideas = ['create 2048 game']  # Example project ideas, write a cli based snake game, write a design requirement and design document for an AI-powered tool 'create an AI-powered design tool', 'develop a mobile app'
+        asyncio.run(self.generate_dynamic_sop(ideas[0]))
 
 if __name__ == "__main__":
     # Assuming the MetaGPT context/config is provided
@@ -382,3 +406,4 @@ if __name__ == "__main__":
     company.run()
 
 
+   
