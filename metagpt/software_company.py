@@ -9,6 +9,7 @@ import typer
 
 from metagpt.const import CONFIG_ROOT
 from metagpt.utils.project_repo import ProjectRepo
+from metagpt.dynamic_sop import DynamicSOP
 
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 
@@ -27,6 +28,7 @@ def generate_repo(
     max_auto_summarize_code=0,
     recover_path=None,
     collect_feedback=False,
+    dynamic_sop = False
 ) -> ProjectRepo:
     """Run the startup logic. Can be called from CLI or other Python scripts."""
     from metagpt.config2 import config
@@ -51,20 +53,58 @@ def generate_repo(
     ctx = Context(config=config)
 
     if not recover_path:
-        company = Team(context=ctx)
-        company.hire(
-            [
-                ProductManager(),
-                Architect(),
-                ProjectManager(),
-            ]
-        )
+        if not dynamic_sop:
+            company = Team(context=ctx)
+            company.hire(
+                [
+                    ProductManager(),
+                    Architect(),
+                    ProjectManager(),
+                ]
+            )
 
-        if implement or code_review:
-            company.hire([Engineer(n_borg=5, use_code_review=code_review)])
+            if implement or code_review:
+                company.hire([Engineer(n_borg=5, use_code_review=code_review)])
 
-        if run_tests:
-            company.hire([QaEngineer()])
+            if run_tests:
+                company.hire([QaEngineer()])
+        else:
+            print("============== Loaded DYNAMIC SOP =========")
+            dyn_sop = DynamicSOP(Context(config=config))
+            asyncio.run(dyn_sop.generate_dynamic_sop(idea))
+
+            company = Team(context=ctx)
+            company.hire(dyn_sop.agent_instances)
+            
+            #========= Report ====================
+            print("-" * 20, " Report ", "-" * 20)
+            print(f"Task: {idea}")
+            print(f"Domain-----: {dyn_sop.domain}")
+
+            # print("-"*20)
+            # print("All Available Agents::")
+            # for agent, info in dyn_sop.all_agents.items():
+            #     print("\n+++++++++++")
+            #     print(f"Agent: {agent}")
+            #     print(f"skill: {info['skill']}")
+            #     print(f"action: {info['action']}")
+            #     print(f"watch: {info['watch']}")
+
+            # print("-"*20)
+            print(f"Agents Loaded for Dynamic SOP: {len(dyn_sop.agent_instances)}")
+            print("\nSuggested Agents")
+            print("="*15)
+            for k,entry in dyn_sop.req_agents_dedup.items():
+                print("\n++++++++++++++++")
+                print(f"SubTask No.: {entry['subtask_number']}")
+                print(f"SubTask: {entry['subtask_description']}")
+                print(f"Agent: {entry['agent']}")
+                print(f"Skill: {entry['skill']}")
+                print(f"Actions: {entry['actions']}")
+                print(f"Watch: {entry['watch_items']}")
+                print(f"Trigger: {entry['trigger']}")
+                print("\n Executing SOP======")
+
     else:
         stg_path = Path(recover_path)
         if not stg_path.exists() or not str(stg_path).endswith("team"):
@@ -108,6 +148,7 @@ def startup(
     recover_path: str = typer.Option(default=None, help="recover the project from existing serialized storage"),
     init_config: bool = typer.Option(default=False, help="Initialize the configuration file for MetaGPT."),
     collect_feedback: bool = typer.Option(default=False, help="Collect user feedbacks to adjust prompts in real-time."),
+    dynamic_sop: bool = typer.Option(default=False, help="Generate SOPS dynamically."),
 ):
     """Run a startup. Be a boss."""
     if init_config:
@@ -132,6 +173,7 @@ def startup(
         max_auto_summarize_code,
         recover_path,
         collect_feedback,
+        dynamic_sop,
     )
 
 

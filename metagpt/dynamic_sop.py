@@ -13,14 +13,30 @@ from metagpt.context import Context
 from metagpt.provider.llm_provider_registry import create_llm_instance
 from metagpt.roles import Role
 from metagpt.logs import logger
+import re
+import importlib.util
 from metagpt.utils.feedback_collector import llm_feedback_loop, Prompt
 
-role_directory = '/Users/raj/Desktop/uoa/capstone/mgpt/MetaGPT/metagpt/roles'
+
 
 class RoleInspector:
-    def __init__(self, directory, output_file=None):
-        self.directory = directory
+    def __init__(self, output_file=None):
+
+        self.directory = self.get_role_directory()
         self.output_file = output_file
+
+    def get_role_directory(self):
+        # Load the metagpt module
+        module_name = 'metagpt.roles'
+        spec = importlib.util.find_spec(module_name)
+        
+        if spec is None:
+            raise ImportError(f"Module '{module_name}' could not be found.")
+        
+        # Get the directory where the roles module is located
+        role_directory = os.path.dirname(spec.origin)
+        
+        return role_directory
 
     def is_role_class(self, node):
         return any(base.id == 'Role' for base in node.bases if isinstance(base, ast.Name))
@@ -49,6 +65,103 @@ class RoleInspector:
                       
         return goal or desc
     
+    # Function to extract actions from the method call: self.set_actions([PrepareDocuments, WritePRD])
+    def get_actions(self, node):
+        actions = []
+        watches = []
+
+        # Traverse the body of the class definition
+        for stmt in node.body:
+            # Check if the statement is a function definition
+            if isinstance(stmt, ast.FunctionDef):
+                # Traverse the body of the function to find calls
+                for func_stmt in stmt.body:
+                    line_number = func_stmt.lineno
+
+                    # Check for expressions
+                    if isinstance(func_stmt, ast.Expr):
+                        stmt_value_type = type(func_stmt.value)
+
+                        if stmt_value_type == ast.Call:
+                            # Handle set_actions
+                            if isinstance(func_stmt.value.func, ast.Attribute) and func_stmt.value.func.attr == 'set_actions':
+                                if func_stmt.value.args:
+                                    if isinstance(func_stmt.value.args[0], (ast.List, ast.Set)):
+                                        for element in func_stmt.value.args[0].elts:
+                                            if isinstance(element, ast.Name):
+                                                actions.append(element.id)
+                                    elif isinstance(func_stmt.value.args[0], ast.Call):
+                                        if isinstance(func_stmt.value.args[0].func, ast.Name):
+                                            actions.append(func_stmt.value.args[0].func.id)
+
+                            # Handle _watch
+                            if isinstance(func_stmt.value.func, ast.Attribute) and func_stmt.value.func.attr == '_watch':
+                                if func_stmt.value.args:
+                                    if isinstance(func_stmt.value.args[0], (ast.List, ast.Set)):
+                                        for element in func_stmt.value.args[0].elts:
+                                            if isinstance(element, ast.Name):
+                                                watches.append(element.id)
+
+                    # Check for conditional actions
+                    elif isinstance(func_stmt, ast.If):
+                        for if_stmt in func_stmt.body:
+                            if isinstance(if_stmt, ast.Expr) and isinstance(if_stmt.value, ast.Call):
+                                if isinstance(if_stmt.value.func, ast.Attribute) and if_stmt.value.func.attr == 'set_actions':
+                                    if if_stmt.value.args:
+                                        if isinstance(if_stmt.value.args[0], (ast.List, ast.Set)):
+                                            for element in if_stmt.value.args[0].elts:
+                                                if isinstance(element, ast.Name):
+                                                    actions.append(element.id)
+                                        elif isinstance(if_stmt.value.args[0], ast.Call):
+                                            if isinstance(if_stmt.value.args[0].func, ast.Name):
+                                                actions.append(if_stmt.value.args[0].func.id)
+
+        return actions, watches
+
+    def get_actions2(self, node):
+        actions = []
+        watches = []
+
+        # Traverse the body of the class definition
+        for stmt in node.body:
+            # Check if the statement is a function definition
+            if isinstance(stmt, ast.FunctionDef):
+                # Traverse the body of the function to find calls
+                for func_stmt in stmt.body:
+                    # Print the actual line of the current statement
+                    line_number = func_stmt.lineno
+                    # print(f"Processing line {line_number}: {ast.get_source_segment(code, func_stmt)}")
+
+                    # Check for expressions
+                    if isinstance(func_stmt, ast.Expr):
+                        # Print the type of func_stmt.value
+                        stmt_value_type = type(func_stmt.value)
+                        # print(f"The type of stmt.value is: {stmt_value_type}")
+
+                        if stmt_value_type == ast.Call:
+                            # Check if it's the set_actions call
+                            if isinstance(func_stmt.value.func, ast.Attribute) and func_stmt.value.func.attr == 'set_actions':
+                                # print(f"Found set_actions: {ast.dump(func_stmt)}")  # Debugging print
+                                if func_stmt.value.args and isinstance(func_stmt.value.args[0], ast.List):
+                                    for element in func_stmt.value.args[0].elts:
+                                        if isinstance(element, ast.Name):
+                                            actions.append(element.id)  # Extract the name of the action
+                            # Check if it's the watch call
+                            if isinstance(func_stmt.value.func, ast.Attribute) and func_stmt.value.func.attr == '_watch':
+                                if func_stmt.value.args and isinstance(func_stmt.value.args[0], ast.List):
+                                    for element in func_stmt.value.args[0].elts:
+                                        if isinstance(element, ast.Name):
+                                            watches.append(element.id)  # Extract the name of the action
+
+                    # If it's a call statement, handle it
+                    elif isinstance(func_stmt, ast.Assign):
+                        for target in func_stmt.targets:
+                            if isinstance(target, ast.Name) and target.id == 'actions':
+                                # You can add logic here if you want to fetch actions assigned directly
+                                pass
+
+        # print(f"Actions found: {actions}")
+        return actions, watches
 
     def process_file(self, file_path):
         with open(file_path, 'r') as file:
@@ -56,12 +169,16 @@ class RoleInspector:
 
         tree = ast.parse(file_content)
         role_classes = []
+        file_name = os.path.basename(file_path)
 
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and self.is_role_class(node):
                 skill = self.get_class_attributes(node)
-                agent = {'agent':node.name,'skill': skill}
+                actions, watches = self.get_actions(node)
+                agent = {'agent':node.name, 'skill': skill, 'action':actions, 'watch':watches, 'file_name':file_name}
+
                 role_classes.append(agent)
+                    
         return role_classes
 
     def get_all_role_summary(self):
@@ -83,15 +200,15 @@ class RoleInspector:
             print(f"Role summary saved to {self.output_file}")
 
 class DynamicSOP:
-    SUPPORTED_DOMAINS = ['software engineering', 'design', 'consulting']  # Replace with MetaGPT-defined supported domains
+    SUPPORTED_DOMAINS = ['software engineering']  # Replace with MetaGPT-defined supported domains
 
     def __init__(self, context):
         self.context = context
         self.llm = create_llm_instance(self.context.config.llm)
-        self.inspector = RoleInspector(role_directory)
+        self.inspector = RoleInspector()
         self.agents = self.inspector.get_all_role_summary()
 
-    async def classify_idea(self, idea: str | Prompt = None) -> str:
+    async def classify_idea(self, idea: str) -> str:
         if not isinstance(idea, Prompt):
             idea = Prompt(f"""
             You are given a task description and a list of supported domains: {self.SUPPORTED_DOMAINS}.
@@ -99,217 +216,169 @@ class DynamicSOP:
             
             Task: {idea}
 
+            Important:
+            - Only return the domain name do not include any additional text or explanations.
+
             ### Output format:
             <Domain name> (exact match to one of {self.SUPPORTED_DOMAINS} or 'None')
             """)
         query = idea.adjusted_prompt if idea.adjusted_prompt else idea.prompt
-        domain = await self.llm.aask(query)
+        domain = await self.llm.aask(query, stream=False)
         llm_feedback_loop(idea, domain)
         if idea.adjusted_prompt:
             domain = await self.classify_idea(idea)
+        logger.info(f"Task: {idea}")
         logger.info(f"Classified idea: {domain.strip()}")
         self.domain = domain.strip()
         return self.domain
+    
+    def get_all_agents(self, list_of_agents):
+        agent_dict = {}
+        for item in list_of_agents:
+            agent = item['agent']
+            # Create a dictionary for each agent with the rest of the values
+            agent_dict[agent] = {
+                'skill': item['skill'],
+                'action': item['action'],
+                'watch': item['watch'],
+                'file_name': item['file_name']
+            }
+        
+        return agent_dict
 
-    async def generate_dynamic_sop(self, idea: str, domain: str) -> list:
-        """
-        Dynamically generate SOP roles and responsibilities based on the project idea and domain.
-        """
+    async def assign_agents(self, idea: str, domain: str) -> list:
+        
+    # starting from those responsible for initiating the project to those handling implementation, testing, or delivery.
         prompt = f"""
-        Given the project idea and domain, generate an SOP (Standard Operating Procedure) dynamically based on the domain.
-        Each role should be described with its responsibility and must logically follow based on the task.
-        Arrange the roles in logical order.
+        Your task is to assign agents to a project based on their skills, actions, and watch items.
+        Agents are triggered only when their watch items are updated by the actions of the previous agent. Ensure that all necessary roles are covered in the correct logical sequence, and avoid including agents that are not relevant to the task.
 
-        Project Idea: {idea}
+        You are given:
+
+        A specific task and domain.
+        A list of agents, their skills, actions, and watch items.
+        Instructions:
+        Identify and match agents to the task based on their skills, actions, and watch items.
+        Only select agents whose watch items are triggered by the actions of a previous agent in the sequence.
+        If no further agent is triggered, stop assigning more agents to the task. This ensures that only the necessary agents are involved.
+        Ensure that no unnecessary agents are included and that agents are logically arranged based on their dependencies.
+        Selection Criteria:
+        An agent is only included if their watch items are triggered by the actions of the previous agent.
+        Skip agents if their actions and watch items are not relevant to the task or if no other agent triggers them.
+        If a task can be completed by fewer agents (e.g., only the ProductManager for writing a PRD), include only the relevant agent(s).
+        
+        Given Task:** {idea}
         Domain: {domain}
-
-        # Output format:
-        1. <Role>: <Responsibility>
-        2. <Role>: <Responsibility>
-        3. <Role>: <Responsibility>
-        """
-        sop_response = await self.llm.aask(prompt)
-        # logger.info(f"Generated SOP roles: {sop_response}")
-
-        return self.parse_roles(sop_response)
-
-    def parse_roles(self, roles_response: str) -> list:
-        """
-        Parses the output containing roles and their responsibilities.
-        It handles both single-line and multi-line (bullet-pointed) responsibilities, combining multi-line responsibilities into a single line.
-        
-        :param roles_response: The string response containing roles and responsibilities.
-        :return: A list of dictionaries where each dictionary contains a role and its combined responsibilities.
-        """
-        parsed_roles = []
-        current_role = None
-        current_responsibilities = []
-
-        import re
-        # Split the response into lines
-        lines = roles_response.strip().split("\n")
-
-        for line in lines:
-            # Match lines that start with "<number>. <Role>: <Responsibility>"
-            role_match = re.match(r"^\d+\.\s*(.*?):\s*(.*)", line)
-            
-            # Match lines that are bullet points, e.g., "- Define the project scope"
-            bullet_point_match = re.match(r"^\s*-\s*(.*)", line)
-
-            if role_match:
-                # If there is a current role and responsibilities, append it to parsed_roles
-                if current_role:
-                    # Join all multiline responsibilities into a single string separated by commas
-                    combined_responsibilities = ", ".join(current_responsibilities)
-                    parsed_roles.append({
-                        "role": current_role,
-                        "responsibilities": combined_responsibilities
-                    })
-
-                # Set the new role and its first responsibility (could be empty if it's a multi-line responsibility)
-                current_role = role_match.group(1).strip()
-                responsibility = role_match.group(2).strip()
-
-                # If there's a single-line responsibility, add it; otherwise, prepare for multi-line responsibilities
-                current_responsibilities = [responsibility] if responsibility else []
-            
-            elif bullet_point_match and current_role:
-                # Add bullet points to the current role's responsibilities
-                current_responsibilities.append(bullet_point_match.group(1).strip())
-
-        # Add the last role and its responsibilities after the loop ends
-        if current_role:
-            # Join all multiline responsibilities into a single string separated by commas
-            combined_responsibilities = ", ".join(current_responsibilities)
-            parsed_roles.append({
-                "role": current_role,
-                "responsibilities": combined_responsibilities
-            })
-
-        return parsed_roles
-
-
-    async def allocate_agents(self, roles: list) -> list:
-        """
-        Allocates agents to dynamically generated roles based on their skills.
-        If no matching agent is found, assigns '<TODO>' to that role.
-        """
-        prompt = f"""
-        Your task is to assign agents to the following roles based on their skills. Each role has a responsibility.
-        For each role, if an agent matches the skill required for the role, return their name and their skill.
-        If no agent matches the role's skill, return '<TODO>' as the agent.
-
-        Roles: {roles}
         Agents: {self.agents}
-        
-        # Output format:
-        1. <Role>: <Responsibility>
-           <Agent>: <Skill>
-        2. <Role>: <Responsibility>
-           <Agent>: <Skill>
+
+        Output Format:
+        Step 1: <Task Subsection or Requirement>
+        Agent: <Agent Name>
+        Skill: <Agent Skill>
+        Actions: <Agent Actions>
+        Watch Items: <Agent Watch Items>
+        Trigger: <Action that triggers this agent>
+
+        Step 2: <Task Subsection or Requirement>
+        Agent: <Agent Name>
+        Skill: <Agent Skill>
+        Actions: <Agent Actions>
+        Watch Items: <Agent Watch Items>
+        Trigger: <Action that triggers this agent>
+
         ...
+
+        Note:
+        Agent: Represents the selected agent for the task.
+        Skill: The agent's main competency relevant to the task.
+        Actions: The tasks performed by this agent.
+        Watch Items: Items that, when updated by another agent’s actions, trigger this agent’s tasks.
+        Trigger: The action from the previous agent that triggers this agent.
+
         """
+        agents_response = await self.llm.aask(prompt, stream=False)
+
+        return self.parse_assign_agents(agents_response)
+
+    def parse_assign_agents(self, text):
+        # Pattern to match steps, agents, skills, actions, watch items, and triggers
+        pattern = r'Step\s(\d+):\s([^\n]+)\nAgent:\s([^\n]+)\nSkill:\s([^\n]+)\nActions:\s([^\n]+)\nWatch\sItems:\s([^\n]+)\nTrigger:\s([^\n]+)'
+
+        # Find all matches
+        matches = re.findall(pattern, text)
+
+        # Store parsed data
+        agent_steps = []
         
-        agents_response = await self.llm.aask(prompt)
-        # logger.info(f"Agents allocated: {agents_response}")
-
-        return self.parse_agents_response(agents_response)
-
-    def parse_agents_response(self, assignment_response: str) -> list:
-        """
-        Parses the output of agent assignment, returning a structured list of roles, responsibilities, agents, and their skills.
-        It also handles cases where no agent is assigned, represented by <TODO>.
-
-        :param assignment_response: The string response from the LLM for agent assignment.
-        :return: A list of dictionaries, where each dictionary contains role, responsibility, agent, and skill.
-        """
-        # Define a list to hold the parsed data
-        parsed_data = []
+        for match in matches:
+            step_data = {
+                'subtask_number': match[0].strip(),
+                'subtask_description': match[1].strip(),
+                'agent': match[2].strip(),
+                'skill': match[3].strip(),
+                'actions': match[4].strip().split(', '),
+                'watch_items': match[5].strip().split(', '),
+                'trigger': match[6].strip()
+            }
+            agent_steps.append(step_data)
         
-        import re
-        # Split the response into individual sections
-        sections = assignment_response.strip().split("\n")
+        return agent_steps
+    
+    def agg_agents(self, agents):
+        final_agents = {}
+        for item in agents:
+            if item['agent'] in final_agents.keys():
+                final_agents[item['agent']]['subtask_description'] += f". {item['subtask_description']}"
+            else:
+                final_agents[item['agent']] = item
+        return final_agents
+
+    def load_agents(self, req_agents):
+        instances = []
+        if "QaEngineer" in req_agents.keys():
+            use_code_review = True
+        else:
+            use_code_review = False
         
-        # Temporary variables to hold role, responsibility, agent, and skill
-        role, responsibility, agent, skill = None, None, None, None
+        all_agents = self.get_all_agents(self.agents)
+        self.all_agents = all_agents
         
-        for line in sections:
-            # Match the role and responsibility line (e.g., "1. Developer: Responsible for writing...")
-            role_responsibility_match = re.match(r"^\d+\.\s*(.*?):\s*(.*)", line)
-            # Match the agent and skill line (e.g., "Engineer: write elegant, readable...")
-            agent_skill_match = re.match(r"^(.*?):\s*(.*)", line)
+        for agent_class, agent_profile in req_agents.items():
+            agent_file = all_agents[agent_class]['file_name'].split('.py')[0]
+            # Dynamically import the module from metagpt.roles
+            module_name = f'metagpt.roles.{agent_file}'
+            module = importlib.import_module(module_name)
 
-            if role_responsibility_match:
-                # If we already have a role and agent from the previous iteration, store it in parsed_data
-                if role is not None:
-                    parsed_data.append({
-                        "role": role,
-                        "responsibility": responsibility,
-                        "agent": agent ,
-                        "skill": skill
-                    })
-                
-                # Extract the new role and responsibility
-                role = role_responsibility_match.group(1).strip()
-                responsibility = role_responsibility_match.group(2).strip()
+            # Get the class from the imported module
+            agent = getattr(module, agent_class)
+            agent = getattr(module, agent_class)
+            agent = getattr(module, agent_class)
+            if  agent_class == 'Engineer':
+                instance = agent(n_borg=5, use_code_review=use_code_review)
+            else:
+                instance = agent()
+            instances.append(instance)
+        return instances
 
-                # Reset agent and skill for the new role
-                agent, skill = None, None
-
-            elif agent_skill_match:
-                # Extract the agent and skill
-                agent = agent_skill_match.group(1).strip()
-                skill = agent_skill_match.group(2).strip()
-
-            
-        # Add the last entry after the loop ends
-        if role is not None:
-            parsed_data.append({
-                "role": role,
-                "responsibility": responsibility,
-                "agent": agent ,
-                "skill": skill
-            })
-        
-        return parsed_data
-
-
-
-    async def run_project(self, idea: str):
+    async def generate_dynamic_sop(self, idea: str):
         domain = await self.classify_idea(idea)
+        self.domain = domain
         if domain in self.SUPPORTED_DOMAINS:
-            # Generate the SOP dynamically based on the idea and domain
-            roles = await self.generate_dynamic_sop(idea, domain)
-            # print("*"*40)
-            # print("SOP")
-            # print(roles)
-            # detailed_sop = await self.generate_dynamic_sop_from_roles(roles, domain)
-            agent_allocations = await self.allocate_agents(roles)
-            print("*"*40)
-            print("agent allocation")
-            print(agent_allocations)
-
-            # logger.info(f"Project setup: {agent_allocations}")
-            # Output the parsed data
-            for entry in agent_allocations:
-                print("-" * 40)
-                print(f"Role: {entry['role']}")
-                print(f"Responsibility: {entry['responsibility']}")
-                print(f"Agent: {entry['agent']}")
-                print(f"Skill: {entry['skill']}")
-                print("-" * 40)
+            self.req_agents = await self.assign_agents(idea, domain)
+            self.req_agents_dedup = self.agg_agents(self.req_agents)
+            self.agent_instances = self.load_agents(self.req_agents_dedup)
+            return self.req_agents_dedup
         else:
             logger.error(f"Domain not supported. Supported domains are {self.SUPPORTED_DOMAINS}")
+            return None
 
     def run(self):
-        ideas = ['write a CLI based snake game']  # Example project ideas, , 'create an AI-powered design tool', 'develop a mobile app'
-        for idea in ideas:
-            asyncio.run(self.run_project(idea))
-
+        ideas = ['write a cli based snake game']  # Example project ideas, write a cli based snake game, write a design requirement and design document for an AI-powered tool 'create an AI-powered design tool', 'develop a mobile app'
+        asyncio.run(self.run_project(ideas[0]))
 
 if __name__ == "__main__":
     # Assuming the MetaGPT context/config is provided
     company = DynamicSOP(Context(config=config))
-    from metagpt.utils.feedback_collector import FEEDBACK_REGISTRY
-    FEEDBACK_REGISTRY.collect_feedback = True
     company.run()
+
+
