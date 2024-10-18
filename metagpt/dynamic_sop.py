@@ -301,7 +301,7 @@ class DynamicSOP:
         else:
             prompt = idea
         query = prompt.adjusted_prompt if prompt.adjusted_prompt else prompt.prompt
-        agents_response = await self.llm.aask(query, stream=True)
+        agents_response = await self.llm.aask(query, stream=False)
         llm_feedback_loop(prompt, agents_response)
         if prompt.adjusted_prompt:
             agents_response = await self.assign_agents(prompt, domain)
