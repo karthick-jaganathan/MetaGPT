@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 import ast
 import asyncio
+import sys
+
 from metagpt.config2 import config
 from metagpt.context import Context
 from metagpt.provider.llm_provider_registry import create_llm_instance
@@ -208,8 +210,7 @@ class DynamicSOP:
         self.inspector = RoleInspector()
         self.agents = self.inspector.get_all_role_summary()
 
-    
-    async def classify_idea(self, idea: str) -> str:
+    async def classify_idea(self, idea: str | Prompt) -> str:
         if not isinstance(idea, Prompt):
             idea = Prompt(f"""
             You are given a task description and a list of supported domains: {self.SUPPORTED_DOMAINS}.
@@ -221,15 +222,13 @@ class DynamicSOP:
             - Only return the domain name do not include any additional text or explanations.
 
             ### Output format:
-            <Domain name> (exact match to one of {self.SUPPORTED_DOMAINS} or 'None')
+            <Domain name> (exact match to one of '{self.SUPPORTED_DOMAINS}', otherwise return the domain/sector the task belongs to.)
             """)
         query = idea.adjusted_prompt if idea.adjusted_prompt else idea.prompt
         domain = await self.llm.aask(query, stream=False)
         llm_feedback_loop(idea, domain)
         if idea.adjusted_prompt:
             domain = await self.classify_idea(idea)
-        logger.info(f"Task: {idea}")
-        logger.info(f"Classified idea: {domain.strip()}")
         self.domain = domain.strip()
         return self.domain
     
@@ -247,59 +246,72 @@ class DynamicSOP:
         
         return agent_dict
 
-    async def assign_agents(self, idea: str, domain: str) -> list:
-        
-    # starting from those responsible for initiating the project to those handling implementation, testing, or delivery.
-        prompt = f"""
-        Your task is to assign agents to a project based on their skills, actions, and watch items.
-        Agents are triggered only when their watch items are updated by the actions of the previous agent. Ensure that all necessary roles are covered in the correct logical sequence, and avoid including agents that are not relevant to the task.
+    async def assign_agents(self, idea: str | Prompt, domain: str) -> list:
+        # starting from those responsible for initiating the project to those handling implementation, testing, or delivery.
+        if not isinstance(idea, Prompt):
+            json_example = """
+            ```json
+            [
+                {
+                    "subtask_number": int,            // <Order of the subtask or requirement>
+                    "subtask_description": str,       // <Task Subsection or Requirement>
+                    "agent": str,                     // <Agent Name>
+                    "skill": str,                     // <Agent Skill>
+                    "actions": list[str],             // <Agent Actions>
+                    "watch_items": list[str],         // <Agent Watch Items>
+                    "trigger": str,                   // <Action that triggers this agent>
+                },
+                ...
+            ]
+            ```
+            """
 
-        You are given:
+            prompt = Prompt(f"""
+            Your task is to assign agents to a project based on their skills, actions, and watch items.
+            Agents are triggered only when their watch items are updated by the actions of the previous agent. Ensure that all necessary roles are covered in the correct logical sequence, and avoid including agents that are not relevant to the task.
+    
+            You are given:
+    
+            A specific task and domain.
+            A list of agents, their skills, actions, and watch items.
+            Instructions:
+                * Identify and match agents to the task based on their skills, actions, and watch items.
+                * Only select agents whose watch items are triggered by the actions of a previous agent in the sequence.
+                * If no further agent is triggered, stop assigning more agents to the task. This ensures that only the necessary agents are involved.
+                * Ensure that no unnecessary agents are included and that agents are logically arranged based on their dependencies.
+            Selection Criteria:
+                * An agent is only included if their watch items are triggered by the actions of the previous agent.
+                * Skip agents if their actions and watch items are not relevant to the task or if no other agent triggers them.
+                * If a task can be completed by fewer agents (e.g., only the ProductManager for writing a PRD), include only the relevant agent(s).
+            
+            Given Task: {idea}
+            Domain: {domain}
+            Agents: {self.agents}
+    
+            Output Format: format the output in array of json objects, for example
+            {json_example}
 
-        A specific task and domain.
-        A list of agents, their skills, actions, and watch items.
-        Instructions:
-        Identify and match agents to the task based on their skills, actions, and watch items.
-        Only select agents whose watch items are triggered by the actions of a previous agent in the sequence.
-        If no further agent is triggered, stop assigning more agents to the task. This ensures that only the necessary agents are involved.
-        Ensure that no unnecessary agents are included and that agents are logically arranged based on their dependencies.
-        Selection Criteria:
-        An agent is only included if their watch items are triggered by the actions of the previous agent.
-        Skip agents if their actions and watch items are not relevant to the task or if no other agent triggers them.
-        If a task can be completed by fewer agents (e.g., only the ProductManager for writing a PRD), include only the relevant agent(s).
-        
-        Given Task:** {idea}
-        Domain: {domain}
-        Agents: {self.agents}
+            Note:
+            Agent: Represents the selected agent for the task.
+            Skill: The agent's main competency relevant to the task.
+            Actions: The tasks performed by this agent.
+            Watch Items: Items that, when updated by another agent’s actions, trigger this agent’s tasks.
+            Trigger: The action from the previous agent that triggers this agent.
+            """)
+        else:
+            prompt = idea
+        query = prompt.adjusted_prompt if prompt.adjusted_prompt else prompt.prompt
+        agents_response = await self.llm.aask(query, stream=False)
+        llm_feedback_loop(prompt, agents_response)
+        if prompt.adjusted_prompt:
+            agents_response = await self.assign_agents(prompt, domain)
+        return self.parse_assign_agents2(agents_response)
 
-        Output Format:
-        Step 1: <Task Subsection or Requirement>
-        Agent: <Agent Name>
-        Skill: <Agent Skill>
-        Actions: <Agent Actions>
-        Watch Items: <Agent Watch Items>
-        Trigger: <Action that triggers this agent>
-
-        Step 2: <Task Subsection or Requirement>
-        Agent: <Agent Name>
-        Skill: <Agent Skill>
-        Actions: <Agent Actions>
-        Watch Items: <Agent Watch Items>
-        Trigger: <Action that triggers this agent>
-
-        ...
-
-        Note:
-        Agent: Represents the selected agent for the task.
-        Skill: The agent's main competency relevant to the task.
-        Actions: The tasks performed by this agent.
-        Watch Items: Items that, when updated by another agent’s actions, trigger this agent’s tasks.
-        Trigger: The action from the previous agent that triggers this agent.
-
-        """
-        agents_response = await self.llm.aask(prompt, stream=True)
-
-        return self.parse_assign_agents(agents_response)
+    def parse_assign_agents2(self, agents_response):
+        from metagpt.utils.common import CodeParser
+        import json
+        agents = json.loads(CodeParser.parse_code(block=None, text=agents_response, lang="json"))
+        return agents
 
     def parse_assign_agents(self, text):
         # Pattern to match steps, agents, skills, actions, watch items, and triggers
@@ -375,8 +387,6 @@ class DynamicSOP:
 
             # Get the class from the imported module
             agent = getattr(module, agent_class)
-            agent = getattr(module, agent_class)
-            agent = getattr(module, agent_class)
             if  agent_class == 'Engineer':
                 instance = agent(n_borg=5, use_code_review=use_code_review)
             else:
@@ -387,23 +397,25 @@ class DynamicSOP:
     async def generate_dynamic_sop(self, idea: str):
         domain = await self.classify_idea(idea)
         self.domain = domain
+        if domain != 'None':
+            logger.info(f"Given idea '{idea}' is classified under domain '{self.domain}'")
         if domain in self.SUPPORTED_DOMAINS:
             self.req_agents = await self.assign_agents(idea, domain)
             self.req_agents_dedup = self.agg_agents(self.req_agents)
             self.agent_instances = self.load_agents(self.req_agents_dedup)
             return self.req_agents_dedup
         else:
+            logger.info(f"Idea '{idea}' is classified under unsupported domain '{domain}'")
             logger.error(f"Domain not supported. Supported domains are {self.SUPPORTED_DOMAINS}")
-            return None
+            logger.error("Exiting...")
+            sys.exit(1)
 
     def run(self):
         ideas = ['create 2048 game']  # Example project ideas, write a cli based snake game, write a design requirement and design document for an AI-powered tool 'create an AI-powered design tool', 'develop a mobile app'
         asyncio.run(self.generate_dynamic_sop(ideas[0]))
 
+
 if __name__ == "__main__":
     # Assuming the MetaGPT context/config is provided
     company = DynamicSOP(Context(config=config))
     company.run()
-
-
-   
