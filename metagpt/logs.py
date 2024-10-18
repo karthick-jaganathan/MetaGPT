@@ -5,16 +5,17 @@
 @Author  : alexanderwu
 @File    : logs.py
 """
-
 import sys
 import os
 from datetime import datetime
-
 from loguru import logger as _logger
-
 from metagpt.const import METAGPT_ROOT
 
 _print_level = "INFO"
+
+# Custom format for logging
+# LOG_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+LOG_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <level>{message}</level>"
 
 
 def define_log_level(print_level="INFO", logfile_level="DEBUG", name: str = None):
@@ -27,8 +28,13 @@ def define_log_level(print_level="INFO", logfile_level="DEBUG", name: str = None
     log_name = f"{name}_{formatted_date}" if name else formatted_date  # name a log with prefix name
 
     _logger.remove()
-    _logger.add(sys.stderr, level=print_level)
-    _logger.add(METAGPT_ROOT / f"logs/{log_name}.txt", level=logfile_level)
+
+    # Add stderr log with custom format
+    _logger.add(sys.stderr, level=print_level, format=LOG_FORMAT)
+
+    # Add file log with custom format
+    _logger.add(METAGPT_ROOT / f"logs/{log_name}.txt", level=logfile_level, format=LOG_FORMAT)
+
     return _logger
 
 
