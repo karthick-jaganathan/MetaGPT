@@ -13,8 +13,8 @@ from rich import box
 import re
 import agentops
 import typer
-from utils.metrics_logger import MetricsLogger
-from utils.metrics_report import MetricsReportGenerator
+from metagpt.utils.metrics_logger import MetricsLogger
+from metagpt.utils.metrics_report import MetricsReportGenerator
 from metagpt.const import CONFIG_ROOT
 from metagpt.utils.project_repo import ProjectRepo
 from metagpt.dynamic_sop import DynamicSOP
@@ -53,11 +53,10 @@ def display_agents_overview(idea: str, domain: str, agents: list[dict]):
             str(item['watch_items']),
             str(item['trigger']),
         )
-        # Insert a blank row for height
         table.add_row("", "", "", "", "", "", "")  # Empty row for gap
 
     # Customize the table borders
-    table.border_style = "bright_blue"  # Set the border color
+    table.border_style = "bright_blue"
 
     # Create the content for the panel
     overview_content = f"""\
@@ -73,7 +72,6 @@ def display_agents_overview(idea: str, domain: str, agents: list[dict]):
     )
 
     console.print()
-    # Print the combined panel
     console.print(combined_panel)
 
 
@@ -84,7 +82,7 @@ def generate_repo(
     code_review=True,
     run_tests=False,
     implement=True,
-    project_name="",  # Default is still empty
+    project_name="",
     inc=False,
     project_path="",
     reqa_file="",
@@ -95,7 +93,7 @@ def generate_repo(
 ) -> ProjectRepo:
     """Run the startup logic. Can be called from CLI or other Python scripts."""
     from metagpt.config2 import config
-    from metagpt.context import Context  # Import the Context class
+    from metagpt.context import Context
     from metagpt.roles import (
         Architect,
         Engineer,
@@ -106,30 +104,14 @@ def generate_repo(
     from metagpt.team import Team
     from metagpt.utils.feedback_collector import FEEDBACK_REGISTRY
 
-    # Generate consistent project_name from the idea for both dynamic and non-dynamic sop
-    project_name="hello_world_script"
-
-    print(f"Project Name: {project_name}")
-
-    # Fetch the current Git repository directory using GitRepository
-    git_repo = GitRepository(local_path=config.workspace.path)  # Initialize the repository
-    repo_dir = git_repo.workdir if git_repo.is_valid else str(config.workspace.path)
-
-    # Merge the current repo directory with the project name to create the workspace directory
-    workspace_dir = os.path.join(repo_dir, project_name)
-
-    # Ensure workspace directory creation (if it doesn't exist)
-    #os.makedirs(workspace_dir, exist_ok=True)
-
-
-    print(f"Workspace Directory: {workspace_dir}")
-
     # Initialize context here
     ctx = Context(config=config)
 
-    # Initialize the metrics logger using the same workspace directory for both flows
-    metrics_logger = MetricsLogger(workspace_dir)
-    metrics_logger.start_timer()  # Start logging the execution time
+    # Initialize the metrics logger here before any operations
+    metrics_logger = MetricsLogger(config.workspace.path)  # workspace path used for now
+
+    # Start the timer as early as possible
+    metrics_logger.start_timer()
 
     if not recover_path:
         if not dynamic_sop:
@@ -161,41 +143,49 @@ def generate_repo(
         company = Team.deserialize(stg_path=stg_path, context=ctx)
         idea = company.idea
 
-    # Log token usage for idea processing
-    metrics_logger.log_token_usage(idea)
-
-    company.invest(investment)
-
     try:
-        # Run the project simulation before generating reports
+        # Execute the project simulation logic
+        company.invest(investment)
         company.run_project(idea)
         asyncio.run(company.run(n_round=n_round))
 
-        # Now that code has been generated, calculate code statistics and complexity
-        metrics_logger.log_code_statistics()  # <-- After file generation
-        metrics_logger.log_code_complexity()  # <-- After file generation
-
-        # Log executability after execution
-        metrics_logger.log_executability(success=True)
     except Exception as e:
-        # If there's an error, log executability as failure
-        metrics_logger.log_executability(success=False)
-        metrics_logger.log_error_rate(1)  # Log error rate
+        if metrics_logger:
+            metrics_logger.log_executability(success=False)
+            metrics_logger.log_error_rate(1)
         raise e
+
     finally:
-        # Stop timer and log the rest of the metrics
+        workspace_dir = ctx.repo.workdir  # Access workspace_dir after project runs
+
+        # Update metrics_logger with actual workspace_dir after the project execution
+        metrics_logger.workspace_dir = workspace_dir
+
+        # Log token usage
+        metrics_logger.log_token_usage(idea)
+
+        # Log statistics and complexity
+        metrics_logger.log_code_statistics()
+        metrics_logger.log_code_complexity()
+
+        # Stop the timer at the very end to capture total running time
         metrics_logger.stop_timer()
+
+        # Log executability as successful after project completion
+        metrics_logger.log_executability(success=True)
+
+        # Log memory usage
         metrics_logger.log_memory_usage()
 
         # Export metrics
         metrics_logger.export_metrics(output_format="json")
 
-        # Generate final report
+        # Generate the final report
         report_generator = MetricsReportGenerator(workspace_dir, report_format="json")
         report_generator.generate_report()
 
-    if config.agentops_api_key != "":
-        agentops.end_session("Success")
+        if config.agentops_api_key:
+            agentops.end_session("Success")
 
     return ctx.repo
 
@@ -214,13 +204,9 @@ def startup(
         default="",
         help="Specify the directory path of the old version project to fulfill the incremental requirements.",
     ),
-    reqa_file: str = typer.Option(
-        default="", help="Specify the source file name for rewriting the quality assurance code."
-    ),
+    reqa_file: str = typer.Option(default="", help="Specify the source file name for rewriting the quality assurance code."),
     max_auto_summarize_code: int = typer.Option(
-        default=0,
-        help="The maximum number of times the 'SummarizeCode' action is automatically invoked, with -1 indicating "
-        "unlimited. This parameter is used for debugging the workflow.",
+        default=0, help="The maximum number of times the 'SummarizeCode' action is automatically invoked."
     ),
     recover_path: str = typer.Option(default=None, help="Recover the project from existing serialized storage"),
     init_config: bool = typer.Option(default=False, help="Initialize the configuration file for MetaGPT."),
@@ -243,7 +229,7 @@ def startup(
         code_review,
         run_tests,
         implement,
-        project_name,  # <- This argument is passed to generate_repo()
+        project_name,
         inc,
         project_path,
         reqa_file,
@@ -269,14 +255,12 @@ def copy_config_to():
     """Initialize the configuration file for MetaGPT."""
     target_path = CONFIG_ROOT / "config2.yaml"
 
-
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if target_path.exists():
         backup_path = target_path.with_suffix(".bak")
         target_path.rename(backup_path)
         print(f"Existing configuration file backed up at {backup_path}")
-
 
     target_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     print(f"Configuration file initialized at {target_path}")

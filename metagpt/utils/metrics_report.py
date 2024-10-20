@@ -27,28 +27,22 @@ class MetricsReportGenerator:
             print("No metrics file found. Please run the pipeline first.")
     
     def _print_json_report(self, metrics):
-        # Initialize the console for rich display
         console = Console()
 
-        # Set column title based on dynamic_sop flag
         column_title = "Dynamic SOP" if self.dynamic_sop else "Native MetaGPT"
 
-        # Create a table with a title and box style from rich.box
         table = Table(title="Statistical Analysis on SoftwareDev", box=box.SIMPLE)
 
-        # Define column headers
         table.add_column("Statistical Index", style="cyan bold", justify="left")
         table.add_column(column_title, style="magenta", justify="center")
 
-        # Add rows to the table based on the metrics
         table.add_row("(A) Executability", str(metrics.get('executability', 'N/A')))
         table.add_row("(B) Cost#1: Running Times (s)", str(metrics.get('running_time', 'N/A')))
         table.add_row("(B) Cost#2: Token Usage", str(metrics.get('token_usage', 'N/A')))
         table.add_row("(C) Code Statistic#1: Code Files", str(metrics.get('code_files', 'N/A')))
-        table.add_row("(C) Code Statistic#2: Lines of Code per File", str(metrics.get('lines_per_file', 'N/A')))
+        table.add_row("(C) Code Statistic#2: Avg Lines of Code per File", str(metrics.get('avg_lines_per_file', 'N/A')))
         table.add_row("(C) Code Statistic#3: Total Code Lines", str(metrics.get('total_code_lines', 'N/A')))
         table.add_row("(D) Productivity", str(metrics.get('productivity', 'N/A')))
         table.add_row("(E) Human Revision Cost", str(metrics.get('human_revision_cost', 'N/A')))
 
-        # Print the table
         console.print(table)

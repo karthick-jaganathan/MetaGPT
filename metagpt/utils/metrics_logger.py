@@ -14,8 +14,8 @@ class MetricsLogger:
             "running_time": 0,
             "token_usage": 0,
             "code_files": 0,
-            "lines_per_file": {},
             "total_code_lines": 0,
+            "avg_lines_per_file": 0,  # Add the new metric for average lines of code
             "human_revision_cost": 0,
             "code_complexity": 0,
             "memory_usage": 0,
@@ -24,9 +24,6 @@ class MetricsLogger:
         self.start_time = None
         self.end_time = None
         self.tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT-3.5 Turbo uses cl100k_base
-
-        # Ensure the workspace directory exists
-        #os.makedirs(self.workspace_dir, exist_ok=True)
 
     def start_timer(self):
         self.start_time = time.time()
@@ -46,12 +43,14 @@ class MetricsLogger:
         total_lines = 0
         code_files = []
         all_files = []
-        
+
         for root, _, files in os.walk(self.workspace_dir):
             for file in files:
-                # Add every file to the list for logging purposes
                 full_path = os.path.join(root, file)
                 all_files.append(full_path)
+
+                relative_subfolder = os.path.relpath(root, self.workspace_dir)
+                relative_file_path = os.path.join(relative_subfolder, file) if relative_subfolder != '.' else file
 
                 # Target code files based on their extensions
                 if file.endswith(('.py', '.html', '.js', '.exe', '.css', '.cpp', '.java', '.sh')):
@@ -60,48 +59,39 @@ class MetricsLogger:
                         with open(full_path, 'r') as f:
                             lines = f.readlines()
                             line_count = len(lines)
-                            self.metrics["lines_per_file"][file] = line_count
                             total_lines += line_count
                     except Exception as e:
                         print(f"Error reading file {full_path}: {e}")
 
         self.metrics["code_files"] = len(code_files)
         self.metrics["total_code_lines"] = total_lines
-        
-        # Log all files found
-        print("All files in workspace:")
-        for file in all_files:
-            print(file)
 
-        # Log all code files found and processed
-        print("\nCode files found:")
-        for file in code_files:
-            print(file)
-        
-        if not code_files:
-            print("No code files found.")
+        # Calculate the average lines of code per file
+        if code_files:
+            avg_lines_per_file = total_lines / len(code_files)
         else:
-            print(f"\nProcessed {len(code_files)} code files with a total of {total_lines} lines.")
-   
+            avg_lines_per_file = 0
+
+        self.metrics["avg_lines_per_file"] = avg_lines_per_file
+        print("Average lines of code per file: {}".format(avg_lines_per_file))
 
     def log_code_complexity(self):
         total_complexity = 0
-        for file in self.metrics["lines_per_file"]:
-            # If file is already a full path, just use it directly
-            full_file_path = file if os.path.isabs(file) else os.path.join(self.workspace_dir, file)
+        for root, _, files in os.walk(self.workspace_dir):
+            for file in files:
+                if file.endswith(('.py', '.html', '.js', '.exe', '.css', '.cpp', '.java', '.sh')):
+                    full_file_path = os.path.join(root, file)
+                    try:
+                        with open(full_file_path, 'r') as f:
+                            code = f.read()
+                            complexity = sum([block.complexity for block in cc_visit(code)])
+                            total_complexity += complexity
+                    except FileNotFoundError:
+                        print(f"File not found: {full_file_path}")
+                    except Exception as e:
+                        print(f"Error reading {full_file_path}: {e}")
 
-            try:
-                with open(full_file_path, 'r') as f:
-                    code = f.read()
-                    complexity = sum([block.complexity for block in cc_visit(code)])
-                    total_complexity += complexity
-            except FileNotFoundError:
-                print(f"File not found: {full_file_path}")
-            except Exception as e:
-                print(f"Error reading {full_file_path}: {e}")
-        
         self.metrics["code_complexity"] = total_complexity
-
 
     def log_memory_usage(self):
         process = psutil.Process(os.getpid())
@@ -109,9 +99,6 @@ class MetricsLogger:
 
     def log_error_rate(self, error_count):
         self.metrics["error_rate"] = error_count
-
-    def log_human_revision_cost(self, revisions):
-        self.metrics["human_revision_cost"] = revisions
 
     def export_metrics(self, output_format='json'):
         if output_format == 'json':
