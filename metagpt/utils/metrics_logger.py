@@ -15,11 +15,11 @@ class MetricsLogger:
             "token_usage": 0,
             "code_files": 0,
             "total_code_lines": 0,
-            "avg_lines_per_file": 0,  # Add the new metric for average lines of code
-            "human_revision_cost": 0,
+            "avg_lines_per_file": 0,
+            #"human_revision_cost": 0,
             "code_complexity": 0,
             "memory_usage": 0,
-            "error_rate": 0
+            "error_rate": 0,
         }
         self.start_time = None
         self.end_time = None
@@ -35,27 +35,27 @@ class MetricsLogger:
     def log_executability(self, success):
         self.metrics["executability"] = 1 if success else 0
 
-    def log_token_usage(self, input_text):
-        token_count = len(self.tokenizer.encode(input_text))
-        self.metrics["token_usage"] += token_count
+    def log_token_usage(self, total_tokens):
+        """Logs the total token usage directly."""
+        self.metrics["token_usage"] += total_tokens  # Using total token count directly
+        print(f"Total token usage: {total_tokens}")
 
     def log_code_statistics(self):
         total_lines = 0
         code_files = []
         all_files = []
 
+        # Walk through the workspace directory to find files
         for root, _, files in os.walk(self.workspace_dir):
             for file in files:
                 full_path = os.path.join(root, file)
                 all_files.append(full_path)
 
-                relative_subfolder = os.path.relpath(root, self.workspace_dir)
-                relative_file_path = os.path.join(relative_subfolder, file) if relative_subfolder != '.' else file
-
                 # Target code files based on their extensions
-                if file.endswith(('.py', '.html', '.js', '.exe', '.css', '.cpp', '.java', '.sh')):
+                if file.endswith(('.py', '.html', '.js', '.css', '.cpp', '.java', '.sh')):
                     code_files.append(full_path)
                     try:
+                        # Read and count the lines in each code file
                         with open(full_path, 'r') as f:
                             lines = f.readlines()
                             line_count = len(lines)
@@ -63,23 +63,25 @@ class MetricsLogger:
                     except Exception as e:
                         print(f"Error reading file {full_path}: {e}")
 
+        # Store total code files and total code lines in the metrics
         self.metrics["code_files"] = len(code_files)
         self.metrics["total_code_lines"] = total_lines
 
-        # Calculate the average lines of code per file
-        if code_files:
+        # Calculate average lines of code per file
+        if len(code_files) > 0:
             avg_lines_per_file = total_lines / len(code_files)
+            self.metrics["avg_lines_per_file"] = avg_lines_per_file
+            print(f"Average lines of code per file: {avg_lines_per_file}")
         else:
-            avg_lines_per_file = 0
-
-        self.metrics["avg_lines_per_file"] = avg_lines_per_file
-        print("Average lines of code per file: {}".format(avg_lines_per_file))
+            # If no code files are found, set average lines per file as "N/A"
+            self.metrics["avg_lines_per_file"] = "N/A"
+            print("No code files found, setting Lines of Code per File to N/A.")
 
     def log_code_complexity(self):
         total_complexity = 0
         for root, _, files in os.walk(self.workspace_dir):
             for file in files:
-                if file.endswith(('.py', '.html', '.js', '.exe', '.css', '.cpp', '.java', '.sh')):
+                if file.endswith(('.py', '.html', '.js', '.css', '.cpp', '.java', '.sh')):
                     full_file_path = os.path.join(root, file)
                     try:
                         with open(full_file_path, 'r') as f:
@@ -99,6 +101,11 @@ class MetricsLogger:
 
     def log_error_rate(self, error_count):
         self.metrics["error_rate"] = error_count
+
+    def log_productivity(self, productivity):
+        """Logs productivity (token usage per line of code)."""
+        self.metrics["productivity"] = productivity
+        print(f"Productivity (tokens per line): {productivity}")
 
     def export_metrics(self, output_format='json'):
         if output_format == 'json':

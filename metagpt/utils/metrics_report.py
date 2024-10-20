@@ -40,9 +40,9 @@ class MetricsReportGenerator:
         table.add_row("(B) Cost#1: Running Times (s)", str(metrics.get('running_time', 'N/A')))
         table.add_row("(B) Cost#2: Token Usage", str(metrics.get('token_usage', 'N/A')))
         table.add_row("(C) Code Statistic#1: Code Files", str(metrics.get('code_files', 'N/A')))
-        table.add_row("(C) Code Statistic#2: Avg Lines of Code per File", str(metrics.get('avg_lines_per_file', 'N/A')))
+        table.add_row("(C) Code Statistic#2: Lines of Code per File", str(metrics.get('avg_lines_per_file', 'N/A')))  # Fix here
         table.add_row("(C) Code Statistic#3: Total Code Lines", str(metrics.get('total_code_lines', 'N/A')))
         table.add_row("(D) Productivity", str(metrics.get('productivity', 'N/A')))
-        table.add_row("(E) Human Revision Cost", str(metrics.get('human_revision_cost', 'N/A')))
+        #table.add_row("(E) Human Revision Cost", str(metrics.get('human_revision_cost', 'N/A')))
 
         console.print(table)

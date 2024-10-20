@@ -1,9 +1,9 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# software_company.py
+# software_company.py (Fixed)
 
 import asyncio
 import os
+import json
+import csv
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -21,6 +21,7 @@ from metagpt.dynamic_sop import DynamicSOP
 from metagpt.utils.common import CodeParser  # Imported from write_prd.py
 from metagpt.actions.write_prd import CONTEXT_TEMPLATE  # Importing CONTEXT_TEMPLATE from write_prd
 from metagpt.utils.git_repository import GitRepository  # Import the GitRepository class
+from metagpt.utils.cost_manager import CostManager  # Import CostManager
 
 
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
@@ -74,7 +75,6 @@ def display_agents_overview(idea: str, domain: str, agents: list[dict]):
     console.print()
     console.print(combined_panel)
 
-
 def generate_repo(
     idea,
     investment=3.0,
@@ -109,6 +109,9 @@ def generate_repo(
 
     # Initialize the metrics logger here before any operations
     metrics_logger = MetricsLogger(config.workspace.path)  # workspace path used for now
+
+    # Initialize CostManager here to track token usage throughout the execution
+    cost_manager = CostManager()
 
     # Start the timer as early as possible
     metrics_logger.start_timer()
@@ -149,6 +152,25 @@ def generate_repo(
         company.run_project(idea)
         asyncio.run(company.run(n_round=n_round))
 
+        # Example token counts for tracking (these would be calculated dynamically)
+        prompt_tokens = 1500  # Replace with actual token count
+        completion_tokens = 2000  # Replace with actual token count
+        model_name = "gpt-4"  # Replace with actual model used
+
+        # Update token usage for this operation
+        cost_manager.update_cost(prompt_tokens, completion_tokens, model_name)
+
+        # Final cumulative token usage logging
+        total_prompt_tokens = cost_manager.get_total_prompt_tokens()
+        total_completion_tokens = cost_manager.get_total_completion_tokens()
+
+        total_token_usage = total_prompt_tokens + total_completion_tokens
+
+        # Fix: Log token usage with just one combined value
+        metrics_logger.log_token_usage(total_token_usage)
+
+        print(f"Final total token usage - Prompt: {total_prompt_tokens}, Completion: {total_completion_tokens}, Total: {total_token_usage}")
+
     except Exception as e:
         if metrics_logger:
             metrics_logger.log_executability(success=False)
@@ -161,13 +183,18 @@ def generate_repo(
         # Update metrics_logger with actual workspace_dir after the project execution
         metrics_logger.workspace_dir = workspace_dir
 
-        # Log token usage
-        metrics_logger.log_token_usage(idea)
-
         # Log statistics and complexity
         metrics_logger.log_code_statistics()
         metrics_logger.log_code_complexity()
 
+        # Calculate productivity: Total tokens used / Total code lines
+        total_code_lines = metrics_logger.metrics["total_code_lines"]
+        if total_code_lines > 0:
+            productivity = total_token_usage / total_code_lines
+            metrics_logger.log_productivity(productivity)
+        else:
+            print("No code lines found to calculate productivity.")
+        
         # Stop the timer at the very end to capture total running time
         metrics_logger.stop_timer()
 
@@ -188,7 +215,6 @@ def generate_repo(
             agentops.end_session("Success")
 
     return ctx.repo
-
 
 @app.command("", help="Start a new project.")
 def startup(
