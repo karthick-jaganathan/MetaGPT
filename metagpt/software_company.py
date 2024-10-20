@@ -1,20 +1,27 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# software_company.py
 
 import asyncio
+import os
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.console import Group
 from rich import box
-
+import re
 import agentops
 import typer
-
+from utils.metrics_logger import MetricsLogger
+from utils.metrics_report import MetricsReportGenerator
 from metagpt.const import CONFIG_ROOT
 from metagpt.utils.project_repo import ProjectRepo
 from metagpt.dynamic_sop import DynamicSOP
+from metagpt.utils.common import CodeParser  # Imported from write_prd.py
+from metagpt.actions.write_prd import CONTEXT_TEMPLATE  # Importing CONTEXT_TEMPLATE from write_prd
+from metagpt.utils.git_repository import GitRepository  # Import the GitRepository class
+
 
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 
@@ -77,18 +84,18 @@ def generate_repo(
     code_review=True,
     run_tests=False,
     implement=True,
-    project_name="",
+    project_name="",  # Default is still empty
     inc=False,
     project_path="",
     reqa_file="",
     max_auto_summarize_code=0,
     recover_path=None,
     collect_feedback=False,
-    dynamic_sop = False
+    dynamic_sop=False,
 ) -> ProjectRepo:
     """Run the startup logic. Can be called from CLI or other Python scripts."""
     from metagpt.config2 import config
-    from metagpt.context import Context
+    from metagpt.context import Context  # Import the Context class
     from metagpt.roles import (
         Architect,
         Engineer,
@@ -99,14 +106,30 @@ def generate_repo(
     from metagpt.team import Team
     from metagpt.utils.feedback_collector import FEEDBACK_REGISTRY
 
-    if config.agentops_api_key != "":
-        agentops.init(config.agentops_api_key, tags=["software_company"])
+    # Generate consistent project_name from the idea for both dynamic and non-dynamic sop
+    project_name="hello_world_script"
 
-    if collect_feedback:
-        FEEDBACK_REGISTRY.collect_feedback = collect_feedback
+    print(f"Project Name: {project_name}")
 
-    config.update_via_cli(project_path, project_name, inc, reqa_file, max_auto_summarize_code)
+    # Fetch the current Git repository directory using GitRepository
+    git_repo = GitRepository(local_path=config.workspace.path)  # Initialize the repository
+    repo_dir = git_repo.workdir if git_repo.is_valid else str(config.workspace.path)
+
+    # Merge the current repo directory with the project name to create the workspace directory
+    workspace_dir = os.path.join(repo_dir, project_name)
+
+    # Ensure workspace directory creation (if it doesn't exist)
+    #os.makedirs(workspace_dir, exist_ok=True)
+
+
+    print(f"Workspace Directory: {workspace_dir}")
+
+    # Initialize context here
     ctx = Context(config=config)
+
+    # Initialize the metrics logger using the same workspace directory for both flows
+    metrics_logger = MetricsLogger(workspace_dir)
+    metrics_logger.start_timer()  # Start logging the execution time
 
     if not recover_path:
         if not dynamic_sop:
@@ -138,9 +161,38 @@ def generate_repo(
         company = Team.deserialize(stg_path=stg_path, context=ctx)
         idea = company.idea
 
+    # Log token usage for idea processing
+    metrics_logger.log_token_usage(idea)
+
     company.invest(investment)
-    company.run_project(idea)
-    asyncio.run(company.run(n_round=n_round))
+
+    try:
+        # Run the project simulation before generating reports
+        company.run_project(idea)
+        asyncio.run(company.run(n_round=n_round))
+
+        # Now that code has been generated, calculate code statistics and complexity
+        metrics_logger.log_code_statistics()  # <-- After file generation
+        metrics_logger.log_code_complexity()  # <-- After file generation
+
+        # Log executability after execution
+        metrics_logger.log_executability(success=True)
+    except Exception as e:
+        # If there's an error, log executability as failure
+        metrics_logger.log_executability(success=False)
+        metrics_logger.log_error_rate(1)  # Log error rate
+        raise e
+    finally:
+        # Stop timer and log the rest of the metrics
+        metrics_logger.stop_timer()
+        metrics_logger.log_memory_usage()
+
+        # Export metrics
+        metrics_logger.export_metrics(output_format="json")
+
+        # Generate final report
+        report_generator = MetricsReportGenerator(workspace_dir, report_format="json")
+        report_generator.generate_report()
 
     if config.agentops_api_key != "":
         agentops.end_session("Success")
@@ -170,7 +222,7 @@ def startup(
         help="The maximum number of times the 'SummarizeCode' action is automatically invoked, with -1 indicating "
         "unlimited. This parameter is used for debugging the workflow.",
     ),
-    recover_path: str = typer.Option(default=None, help="recover the project from existing serialized storage"),
+    recover_path: str = typer.Option(default=None, help="Recover the project from existing serialized storage"),
     init_config: bool = typer.Option(default=False, help="Initialize the configuration file for MetaGPT."),
     collect_feedback: bool = typer.Option(default=False, help="Collect user feedbacks to adjust prompts in real-time."),
     dynamic_sop: bool = typer.Option(default=False, help="Generate SOPS dynamically."),
@@ -191,7 +243,7 @@ def startup(
         code_review,
         run_tests,
         implement,
-        project_name,
+        project_name,  # <- This argument is passed to generate_repo()
         inc,
         project_path,
         reqa_file,
@@ -217,16 +269,15 @@ def copy_config_to():
     """Initialize the configuration file for MetaGPT."""
     target_path = CONFIG_ROOT / "config2.yaml"
 
-    # 创建目标目录（如果不存在）
+
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 如果目标文件已经存在，则重命名为 .bak
     if target_path.exists():
         backup_path = target_path.with_suffix(".bak")
         target_path.rename(backup_path)
         print(f"Existing configuration file backed up at {backup_path}")
 
-    # 复制文件
+
     target_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     print(f"Configuration file initialized at {target_path}")
 
