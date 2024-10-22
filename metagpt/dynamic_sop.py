@@ -120,51 +120,6 @@ class RoleInspector:
 
         return actions, watches
 
-    def get_actions2(self, node):
-        actions = []
-        watches = []
-
-        # Traverse the body of the class definition
-        for stmt in node.body:
-            # Check if the statement is a function definition
-            if isinstance(stmt, ast.FunctionDef):
-                # Traverse the body of the function to find calls
-                for func_stmt in stmt.body:
-                    # Print the actual line of the current statement
-                    line_number = func_stmt.lineno
-                    # print(f"Processing line {line_number}: {ast.get_source_segment(code, func_stmt)}")
-
-                    # Check for expressions
-                    if isinstance(func_stmt, ast.Expr):
-                        # Print the type of func_stmt.value
-                        stmt_value_type = type(func_stmt.value)
-                        # print(f"The type of stmt.value is: {stmt_value_type}")
-
-                        if stmt_value_type == ast.Call:
-                            # Check if it's the set_actions call
-                            if isinstance(func_stmt.value.func, ast.Attribute) and func_stmt.value.func.attr == 'set_actions':
-                                # print(f"Found set_actions: {ast.dump(func_stmt)}")  # Debugging print
-                                if func_stmt.value.args and isinstance(func_stmt.value.args[0], ast.List):
-                                    for element in func_stmt.value.args[0].elts:
-                                        if isinstance(element, ast.Name):
-                                            actions.append(element.id)  # Extract the name of the action
-                            # Check if it's the watch call
-                            if isinstance(func_stmt.value.func, ast.Attribute) and func_stmt.value.func.attr == '_watch':
-                                if func_stmt.value.args and isinstance(func_stmt.value.args[0], ast.List):
-                                    for element in func_stmt.value.args[0].elts:
-                                        if isinstance(element, ast.Name):
-                                            watches.append(element.id)  # Extract the name of the action
-
-                    # If it's a call statement, handle it
-                    elif isinstance(func_stmt, ast.Assign):
-                        for target in func_stmt.targets:
-                            if isinstance(target, ast.Name) and target.id == 'actions':
-                                # You can add logic here if you want to fetch actions assigned directly
-                                pass
-
-        # print(f"Actions found: {actions}")
-        return actions, watches
-
     def process_file(self, file_path):
         with open(file_path, 'r') as file:
             file_content = file.read()
@@ -275,14 +230,14 @@ class DynamicSOP:
             A specific task and domain.
             A list of agents, their skills, actions, and watch items.
             Instructions:
-                * Identify and match agents to the task based on their skills, actions, and watch items.
-                * Only select agents whose watch items are triggered by the actions of a previous agent in the sequence.
-                * If no further agent is triggered, stop assigning more agents to the task. This ensures that only the necessary agents are involved.
-                * Ensure that no unnecessary agents are included and that agents are logically arranged based on their dependencies.
+            1. Identify and match agents to the task based on their skills, actions, and watch items.
+            2. Only select agents whose watch items are triggered by the actions of a previous agent in the sequence.
+            3. If no further agent is triggered, stop assigning more agents to the task. This ensures that only the necessary agents are involved.
+            4. Ensure that no unnecessary agents are included and that agents are logically arranged based on their dependencies.
             Selection Criteria:
-                * An agent is only included if their watch items are triggered by the actions of the previous agent.
-                * Skip agents if their actions and watch items are not relevant to the task or if no other agent triggers them.
-                * If a task can be completed by fewer agents (e.g., only the ProductManager for writing a PRD), include only the relevant agent(s).
+            1. An agent is only included if their watch items are triggered by the actions of the previous agent.
+            2. Skip agents if their actions and watch items are not relevant to the task or if no other agent triggers them.
+            3. If a task can be completed by fewer agents (e.g., only the ProductManager for writing a PRD), include only the relevant agent(s).
             
             Given Task: {idea}
             Domain: {domain}
@@ -304,62 +259,15 @@ class DynamicSOP:
         agents_response = await self.llm.aask(query, stream=False)
         llm_feedback_loop(prompt, agents_response)
         if prompt.adjusted_prompt:
-            agents_response = await self.assign_agents(prompt, domain)
-        return self.parse_assign_agents2(agents_response)
+            return await self.assign_agents(prompt, domain)
+        return self.parse_assign_agents(agents_response)
 
-    def parse_assign_agents2(self, agents_response):
+    def parse_assign_agents(self, agents_response):
         from metagpt.utils.common import CodeParser
         import json
         agents = json.loads(CodeParser.parse_code(block=None, text=agents_response, lang="json"))
         return agents
 
-    def parse_assign_agents(self, text):
-        # Pattern to match steps, agents, skills, actions, watch items, and triggers
-        pattern = r'Step\s(\d+):\s([^\n]+)\nAgent:\s([^\n]+)\nSkill:\s([^\n]+)\nActions:\s([^\n]+)\nWatch\sItems:\s([^\n]+)\nTrigger:\s([^\n]+)'
-
-        # Find all matches
-        matches = re.findall(pattern, text)
-
-        # Store parsed data
-        agent_steps = []
-        
-        for match in matches:
-            step_data = {
-                'subtask_number': match[0].strip(),
-                'subtask_description': match[1].strip(),
-                'agent': match[2].strip(),
-                'skill': match[3].strip(),
-                'actions': match[4].strip().split(', '),
-                'watch_items': match[5].strip().split(', '),
-                'trigger': match[6].strip()
-            }
-            agent_steps.append(step_data)
-        
-        return agent_steps
-        
-
-    def parse_assign_agents_old(self, text):
-        # Pattern to match steps, roles, responsibilities, and tasks
-        pattern = r'(\d+)\.\s+Step:\s+([^\n]+)\n([A-Za-z]+):\s+([^:]+):\s+([^\n]+)'
-        
-        # Find all matches
-        matches = re.findall(pattern, text)
-
-        subtask_roles_and_responsibilities = []
-        
-        for match in matches:
-            subtask_data = {
-                'subtask_number': match[0].strip(),
-                'subtask_description': match[1].strip(),
-                'agent': match[2].strip(),
-                'skill': match[3].strip(),
-                'actions': match[4].strip().split(', '),
-                'watch': match[5].strip().split(', ')
-            }
-            subtask_roles_and_responsibilities.append(subtask_data)
-        
-        return subtask_roles_and_responsibilities
-    
     def agg_agents(self, agents):
         final_agents = {}
         for item in agents:
@@ -371,6 +279,13 @@ class DynamicSOP:
 
     def load_agents(self, req_agents):
         instances = []
+        # from metagpt.roles import ProductManager, Architect, ProjectManager
+        # instances.append(ProductManager())
+        # instances.append(Architect())
+        # instances.append(ProjectManager())
+        # Architect,
+        # Engineer,
+        # ,
         if "QaEngineer" in req_agents.keys():
             use_code_review = True
         else:
@@ -380,6 +295,9 @@ class DynamicSOP:
         self.all_agents = all_agents
         
         for agent_class, agent_profile in req_agents.items():
+            if agent_class in ['ProductManager', 'Architect', 'ProjectManager']:
+                continue
+
             agent_file = all_agents[agent_class]['file_name'].split('.py')[0]
             # Dynamically import the module from metagpt.roles
             module_name = f'metagpt.roles.{agent_file}'
@@ -402,7 +320,13 @@ class DynamicSOP:
         if domain in self.SUPPORTED_DOMAINS:
             self.req_agents = await self.assign_agents(idea, domain)
             self.req_agents_dedup = self.agg_agents(self.req_agents)
-            self.agent_instances = self.load_agents(self.req_agents_dedup)
+            from metagpt.roles import ProductManager, ProjectManager, Architect
+            self.agent_instances = [
+                ProductManager(),
+                Architect(),
+                ProjectManager()
+            ]
+            self.agent_instances.extend(self.load_agents(self.req_agents_dedup))
             return self.req_agents_dedup
         else:
             logger.info(f"Idea '{idea}' is classified under unsupported domain '{domain}'")
@@ -412,7 +336,13 @@ class DynamicSOP:
 
     def run(self):
         ideas = ['create 2048 game']  # Example project ideas, write a cli based snake game, write a design requirement and design document for an AI-powered tool 'create an AI-powered design tool', 'develop a mobile app'
-        asyncio.run(self.generate_dynamic_sop(ideas[0]))
+        idea = 'create rock paper scissor game'
+        idea = 'create a rock paper scissor game'
+        idea = 'create 2048 game'
+        idea = 'write a simple python function to calculate the surface area of cone'
+        # idea = 'create cli based 2048 game'
+        # idea = 'marketing campaign for shoes'
+        asyncio.run(self.generate_dynamic_sop(idea))
 
 
 if __name__ == "__main__":

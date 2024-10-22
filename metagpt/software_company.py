@@ -18,13 +18,61 @@ from metagpt.dynamic_sop import DynamicSOP
 
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 
+def display_all_agents_overview(idea: str, domain: str, agents: list[dict]):
+    # Initialize the console
+    console = Console()
+
+    # Create a table with a title
+    table = Table(title="Available Agents", box=box.SIMPLE)
+
+    # Define column headers with styles
+    table.add_column("SNo.", style="cyan bold", justify="center")
+    # table.add_column("Description", style="magenta", justify="left")
+    table.add_column("Agent", style="green", justify="left")
+    table.add_column("Skill", style="yellow", justify="left")
+    table.add_column("Actions", style="white", justify="left")
+    table.add_column("Watch", style="blue", justify="left")
+    # table.add_column("Trigger", style="bright_white", justify="left")
+
+    # Add rows to the table
+    for index, item in enumerate(agents):
+        table.add_row(
+            str(index+1),
+            # str(item['subtask_description']),
+            str(item['agent']),
+            str(item['skill']),
+            str(item['action']),
+            str(item['watch']),
+            # str(item['trigger']),
+        )
+        # Insert a blank row for height
+        table.add_row("", "", "", "", "", "", "")  # Empty row for gap
+
+    # Customize the table borders
+    table.border_style = "bright_blue"  # Set the border color
+
+    # Create the content for the panel
+    overview_content = f"""
+    """
+
+    # Create a single panel combining both overview and table
+    combined_panel = Panel(
+        Group(overview_content, table),
+        title="Dynamic SOP",
+        border_style="bright_blue"
+    )
+
+    console.print()
+    # Print the combined panel
+    console.print(combined_panel)
+
 
 def display_agents_overview(idea: str, domain: str, agents: list[dict]):
     # Initialize the console
     console = Console()
 
     # Create a table with a title
-    table = Table(title="Agents Overview", box=box.SIMPLE)
+    table = Table(title="Recommended Agents", box=box.SIMPLE)
 
     # Define column headers with styles
     table.add_column("Task ID", style="cyan bold", justify="center")
@@ -127,9 +175,14 @@ def generate_repo(
         else:
             dyn_sop = DynamicSOP(Context(config=config))
             asyncio.run(dyn_sop.generate_dynamic_sop(idea))
+            # display_all_agents_overview(idea, domain=dyn_sop.domain, agents=dyn_sop.agents)
+           
             display_agents_overview(idea, domain=dyn_sop.domain, agents=dyn_sop.req_agents_dedup.values())
+        
             company = Team(context=ctx)
             company.hire(dyn_sop.agent_instances)
+            
+            
     else:
         stg_path = Path(recover_path)
         if not stg_path.exists() or not str(stg_path).endswith("team"):
@@ -140,7 +193,9 @@ def generate_repo(
 
     company.invest(investment)
     company.run_project(idea)
+    
     asyncio.run(company.run(n_round=n_round))
+    
 
     if config.agentops_api_key != "":
         agentops.end_session("Success")
